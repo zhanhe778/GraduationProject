@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>智能温室环境监测与控制平台</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background-color: #0f172a;
+      color: #e5e7eb;
+    }
+    header {
+      padding: 16px 24px;
+      background: #020617;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      font-size: 20px;
+      margin: 0;
+    }
+    .container {
+      padding: 16px 24px 32px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: #020617;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      padding: 16px 18px;
+      box-sizing: border-box;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #1f2937;
+      text-align: left;
+    }
+    th {
+      color: #9ca3af;
+      font-weight: 500;
+    }
+    tr:nth-child(even) td {
+      background: rgba(15, 23, 42, 0.5);
+    }
+    input, select, button {
+      font-family: inherit;
+      font-size: 13px;
+      border-radius: 6px;
+      border: 1px solid #374151;
+      background: #020617;
+      color: #e5e7eb;
+      padding: 6px 8px;
+      box-sizing: border-box;
+    }
+    button {
+      cursor: pointer;
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+    button.secondary {
+      background: #111827;
+      border-color: #374151;
+      color: #e5e7eb;
+    }
+    button:disabled {
+      background: #1f2937;
+      border-color: #374151;
+      cursor: default;
+    }
+    .field {
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .field label {
+      min-width: 72px;
+      font-size: 12px;
+      color: #9ca3af;
+    }
+    .status-bar {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 8px;
+    }
+    .flex {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .mt-8 {
+      margin-top: 8px;
+    }
+    .mt-12 {
+      margin-top: 12px;
+    }
+    .pill {
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid #374151;
+      color: #9ca3af;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+    .tag-on {
+      background: rgba(22, 163, 74, 0.1);
+      color: #4ade80;
+    }
+    .tag-off {
+      background: rgba(220, 38, 38, 0.1);
+      color: #fca5a5;
+    }
+    .tag-manual {
+      background: rgba(234, 179, 8, 0.1);
+      color: #fde047;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>智能温室环境监测与控制平台</h1>
+  <span class="pill">后端默认地址: http://localhost:8080</span>
+</header>
+<div id="app" class="container">
+  <div class="flex mt-8">
+    <button @click="loadGreenhouses" :disabled="loading">刷新大棚</button>
+    <span class="status-bar" v-if="greenhouses.length">当前大棚数: {{ greenhouses.length }}</span>
+    <span class="status-bar">{{ wsStatus }}</span>
+  </div>
+
+  <div v-if="!selectedGreenhouse" class="grid mt-12">
+    <div class="card" v-for="gh in greenhouses" :key="gh.greenhouseId">
+      <div class="flex">
+        <h2 style="margin-right: 6px;">大棚 {{ gh.greenhouseId }}</h2>
+        <span class="tag tag-manual" v-if="gh.manualMode">手动模式</span>
+      </div>
+      <div class="status-bar" v-if="gh.name && gh.name !== gh.greenhouseId">{{ gh.name }}</div>
+
+      <div class="mt-8">
+        <h3 style="font-size: 14px; margin: 0 0 6px;">传感器数据</h3>
+        <table v-if="gh.sensors.length">
+          <thead>
+          <tr>
+            <th>传感器</th>
+            <th>类型</th>
+            <th>数值</th>
+            <th>时间</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr v-for="s in gh.sensors" :key="s.sensorId">
+            <td>{{ s.sensorId }}</td>
+            <td>{{ s.type }}</td>
+            <td>{{ formatValue(s.value, s.unit) }}</td>
+            <td>{{ formatTime(s.timestamp) }}</td>
+          </tr>
+          </tbody>
+        </table>
+        <div class="status-bar" v-else>暂无传感器数据</div>
+      </div>
+
+      <div class="mt-12">
+        <h3 style="font-size: 14px; margin: 0 0 6px;">执行器状态</h3>
+        <table v-if="gh.actuators.length">
+          <thead>
+          <tr>
+            <th>执行器</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>更新时间</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr v-for="a in gh.actuators" :key="a.actuatorId">
+            <td>{{ a.actuatorId }}</td>
+            <td>{{ a.type }}</td>
+            <td>
+              <span class="tag" :class="a.status === 'on' ? 'tag-on' : 'tag-off'">
+                {{ a.status || 'unknown' }}
+              </span>
+            </td>
+            <td>{{ formatTime(a.lastCommandAt) }}</td>
+          </tr>
+          </tbody>
+        </table>
+        <div class="status-bar" v-else>暂无执行器</div>
+      </div>
+
+      <div class="mt-12">
+        <button @click="openDetail(gh.greenhouseId)">进入二级页面</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="mt-12">
+    <div class="flex">
+      <button class="secondary" @click="closeDetail">返回大棚列表</button>
+      <h2>大棚 {{ selectedGreenhouse.greenhouseId }} 详情</h2>
+      <span class="tag tag-manual" v-if="selectedGreenhouse.manualMode">手动模式</span>
+    </div>
+
+    <div class="grid mt-12">
+      <div class="card">
+        <h2>实时环境监测</h2>
+        <table v-if="selectedGreenhouse.sensors.length">
+          <thead>
+          <tr>
+            <th>传感器</th>
+            <th>类型</th>
+            <th>当前数值</th>
+            <th>更新时间</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr v-for="s in selectedGreenhouse.sensors" :key="s.sensorId">
+            <td>{{ s.sensorId }}</td>
+            <td>{{ s.type }}</td>
+            <td>{{ formatValue(s.value, s.unit) }}</td>
+            <td>{{ formatTime(s.timestamp) }}</td>
+          </tr>
+          </tbody>
+        </table>
+        <div class="status-bar" v-else>暂无传感器数据</div>
+      </div>
+
+      <div class="card">
+        <h2>历史数据</h2>
+        <div class="flex">
+          <select v-model="historySensorId">
+            <option value="" disabled>选择传感器</option>
+            <option v-for="s in selectedGreenhouse.sensors" :value="s.sensorId">
+              {{ s.sensorId }} ({{ s.type }})
+            </option>
+          </select>
+          <button @click="loadHistory(0)">查询最近记录</button>
+        </div>
+        <table class="mt-8" v-if="historyData.length">
+          <thead>
+          <tr>
+            <th>时间</th>
+            <th>数值</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr v-for="h in historyData" :key="h.timestamp">
+            <td>{{ formatTime(h.timestamp) }}</td>
+            <td>{{ formatValue(h.value, h.unit) }}</td>
+          </tr>
+          </tbody>
+        </table>
+        <div class="flex mt-8" v-if="historyData.length" style="justify-content: center; gap: 1rem;">
+          <button :disabled="historyPage <= 0" @click="loadHistory(historyPage - 1)">上一页</button>
+          <span>第 {{ historyPage + 1 }} / {{ historyTotalPages }} 页</span>
+          <button :disabled="historyPage >= historyTotalPages - 1" @click="loadHistory(historyPage + 1)">下一页</button>
+        </div>
+        <div class="status-bar" v-else>暂无历史数据</div>
+      </div>
+
+      <div class="card">
+        <h2>规则设置</h2>
+        <div class="field">
+          <label>温度范围</label>
+          <input type="number" v-model.number="ruleForm.temperature.minValue" placeholder="最小值">
+          <input type="number" v-model.number="ruleForm.temperature.maxValue" placeholder="最大值">
+          <label style="min-width:auto;">启用</label>
+          <input type="checkbox" v-model="ruleForm.temperature.enabled">
+        </div>
+        <div class="field">
+          <label>湿度范围</label>
+          <input type="number" v-model.number="ruleForm.humidity.minValue" placeholder="最小值">
+          <input type="number" v-model.number="ruleForm.humidity.maxValue" placeholder="最大值">
+          <label style="min-width:auto;">启用</label>
+          <input type="checkbox" v-model="ruleForm.humidity.enabled">
+        </div>
+        <div class="field">
+          <label>光照范围</label>
+          <input type="number" v-model.number="ruleForm.light.minValue" placeholder="最小值">
+          <input type="number" v-model.number="ruleForm.light.maxValue" placeholder="最大值">
+          <label style="min-width:auto;">启用</label>
+          <input type="checkbox" v-model="ruleForm.light.enabled">
+        </div>
+        <button @click="saveRules">保存规则</button>
+      </div>
+    </div>
+
+    <div class="card mt-12">
+      <h2>手动控制</h2>
+      <div class="flex">
+        <button @click="toggleManualMode(true)" :disabled="selectedGreenhouse.manualMode">进入手动模式</button>
+        <button class="secondary" @click="toggleManualMode(false)" :disabled="!selectedGreenhouse.manualMode">退出手动模式</button>
+      </div>
+      <div class="status-bar" :style="{ color: selectedGreenhouse.manualMode ? '#fde047' : '#4ade80' }">
+        当前模式: {{ selectedGreenhouse.manualMode ? '手动控制 (自动规则已暂停)' : '自动控制 (规则引擎运行中)' }}
+      </div>
+      <table class="mt-8" v-if="selectedGreenhouse.actuators.length">
+        <thead>
+        <tr>
+          <th>执行器</th>
+          <th>类型</th>
+          <th>状态</th>
+          <th>操作</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-for="a in selectedGreenhouse.actuators" :key="a.actuatorId">
+          <td>{{ a.actuatorId }}</td>
+          <td>{{ a.type }}</td>
+          <td>
+            <span class="tag" :class="a.status === 'on' ? 'tag-on' : 'tag-off'">
+              {{ a.status || 'unknown' }}
+            </span>
+          </td>
+          <td class="flex">
+            <button @click="manualCommand(a.actuatorId, 'on')" :disabled="!selectedGreenhouse.manualMode" 
+              :title="!selectedGreenhouse.manualMode ? '请先进入手动模式' : ''">开启</button>
+            <button class="secondary" @click="manualCommand(a.actuatorId, 'off')" :disabled="!selectedGreenhouse.manualMode"
+              :title="!selectedGreenhouse.manualMode ? '请先进入手动模式' : ''">关闭</button>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+      <div class="status-bar" v-else>暂无执行器</div>
+    </div>
+    
+    <!-- Debug Log Panel -->
+    <div class="card mt-12" style="border-top: 1px solid #334155; padding-top: 12px;">
+      <h3 style="font-size: 14px; color: #94a3b8; cursor: pointer;" @click="showDebug = !showDebug">
+        WebSocket 调试日志 (点击{{ showDebug ? '隐藏' : '展开' }})
+      </h3>
+      <div v-if="showDebug" style="background: #0f172a; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto; color: #cbd5e1;">
+        <div v-for="(log, i) in wsLogs" :key="i" style="border-bottom: 1px solid #1e293b; padding: 2px 0;">
+          {{ log }}
+        </div>
+        <div v-if="wsLogs.length === 0" style="color: #64748b;">暂无日志...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const { createApp } = Vue;
+
+  createApp({
+    data() {
+      return {
+        apiBase: 'http://localhost:8081',
+        greenhouses: [],
+        selectedGreenhouse: null,
+        loading: false,
+        wsClient: null,
+        wsStatus: 'WebSocket: 未连接',
+        wsLogs: [], // Log messages
+        showDebug: true,
+        historySensorId: '',
+        historyPage: 0,
+        historySize: 10,
+        historyTotalPages: 0,
+        historyData: [],
+        ruleForm: {
+          temperature: { minValue: 0, maxValue: 40, enabled: true },
+          humidity: { minValue: 30, maxValue: 80, enabled: true },
+          light: { minValue: 200, maxValue: 800, enabled: true }
+        }
+      };
+    },
+    mounted() {
+      this.loadGreenhouses();
+    },
+    methods: {
+      /**
+       * 加载大棚列表数据
+       * 包含所有大棚的实时状态摘要
+       */
+      async loadGreenhouses() {
+        this.loading = true;
+        try {
+          const res = await fetch(this.apiBase + '/api/greenhouses');
+          this.greenhouses = res.ok ? await res.json() : [];
+        } finally {
+          this.loading = false;
+        }
+      },
+      
+      /**
+       * 进入大棚详情页（二级页面）
+       * 1. 获取大棚完整详情
+       * 2. 建立 WebSocket 连接
+       * 3. 初始化规则表单
+       */
+      async openDetail(greenhouseId) {
+        const res = await fetch(this.apiBase + '/api/greenhouses/' + greenhouseId);
+        if (!res.ok) return;
+        this.selectedGreenhouse = await res.json();
+        // 默认选中第一个传感器用于历史数据查询
+        this.historySensorId = this.selectedGreenhouse.sensors[0]?.sensorId || '';
+        this.connectWs(greenhouseId);
+        this.initRuleForm();
+      },
+      
+      /**
+       * 退出详情页，返回列表
+       * 断开 WebSocket 连接以节省资源
+       */
+      closeDetail() {
+        this.selectedGreenhouse = null;
+        this.historyData = [];
+        this.disconnectWs();
+      },
+      
+      /**
+       * 建立 WebSocket 连接
+       * 订阅特定大棚的实时消息主题 (/topic/greenhouse/{id})
+       */
+      connectWs(greenhouseId) {
+        this.disconnectWs();
+        const url = this.apiBase + '/ws';
+        // Use SockJS for better compatibility
+        const socket = new SockJS(url);
+        const client = Stomp.over(socket);
+        
+        client.debug = (str) => {
+          this.wsLogs.unshift(new Date().toLocaleTimeString() + ' [STOMP] ' + str);
+          if (this.wsLogs.length > 50) this.wsLogs.pop();
+        };
+        this.wsStatus = 'WebSocket: 连接中...';
+        
+        client.connect({}, () => {
+          this.wsStatus = 'WebSocket: 已连接';
+          const topic = '/topic/greenhouse/' + greenhouseId;
+          // IMPORTANT: 强制 Vue 响应式更新日志数组，确保显示
+          const logMsg = new Date().toLocaleTimeString() + ' [Subscribe] ' + topic;
+          this.wsLogs = [logMsg, ...this.wsLogs].slice(0, 50); 
+          
+          client.subscribe(topic, msg => {
+            try {
+              const recvMsg = new Date().toLocaleTimeString() + ' [Received] ' + msg.body;
+              this.wsLogs = [recvMsg, ...this.wsLogs].slice(0, 50);
+              
+              const event = JSON.parse(msg.body);
+              this.applyRealtimeEvent(event);
+            } catch (e) {
+              const errMsg = new Date().toLocaleTimeString() + ' [Error] Parse/Apply failed: ' + e.message;
+              this.wsLogs = [errMsg, ...this.wsLogs].slice(0, 50);
+            }
+          });
+        }, (err) => {
+          this.wsStatus = 'WebSocket: 连接失败';
+          const errMsg = new Date().toLocaleTimeString() + ' [Error] Connect failed: ' + err;
+          this.wsLogs = [errMsg, ...this.wsLogs].slice(0, 50);
+        });
+        this.wsClient = client;
+      },
+      
+      disconnectWs() {
+        if (this.wsClient) {
+          try {
+            this.wsClient.disconnect();
+          } catch (_) {}
+          this.wsClient = null;
+          this.wsStatus = 'WebSocket: 未连接';
+        }
+      },
+      
+      /**
+       * 处理 WebSocket 推送的实时事件
+       * 动态更新页面上的传感器数值或执行器状态
+       */
+      applyRealtimeEvent(event) {
+        if (!this.selectedGreenhouse || !event) return;
+        
+        // 处理传感器更新
+        if (event.kind === 'sensor') {
+          const data = event.payload;
+          const target = this.selectedGreenhouse.sensors.find(s => s.sensorId === data.sensorId);
+          if (target) {
+            Object.assign(target, data); // 实时刷新数值
+          } else {
+            this.selectedGreenhouse.sensors.push(data);
+          }
+        }
+        
+        // 处理执行器更新
+        if (event.kind === 'actuator') {
+          const data = event.payload;
+          const target = this.selectedGreenhouse.actuators.find(a => a.actuatorId === data.actuatorId);
+          if (target) {
+            Object.assign(target, data); // 实时刷新状态（如开关）
+          } else {
+            this.selectedGreenhouse.actuators.push(data);
+          }
+        }
+        
+        // 同步更新列表页的缓存数据
+        const listTarget = this.greenhouses.find(g => g.greenhouseId === this.selectedGreenhouse.greenhouseId);
+        if (listTarget) {
+          listTarget.sensors = [...this.selectedGreenhouse.sensors];
+          listTarget.actuators = [...this.selectedGreenhouse.actuators];
+        }
+      },
+      
+      /**
+       * 初始化规则表单数据
+       * 将后端返回的规则配置映射到前端表单模型
+       */
+      initRuleForm() {
+        const rules = this.selectedGreenhouse.rules || [];
+        for (const metric of ['temperature', 'humidity', 'light']) {
+          const rule = rules.find(r => r.metric === metric);
+          if (rule) {
+            this.ruleForm[metric] = {
+              minValue: rule.minValue,
+              maxValue: rule.maxValue,
+              enabled: rule.enabled
+            };
+          }
+        }
+      },
+      
+      // 保存规则配置到后端
+      async saveRules() {
+        const payload = {
+          rules: [
+            { metric: 'temperature', ...this.ruleForm.temperature },
+            { metric: 'humidity', ...this.ruleForm.humidity },
+            { metric: 'light', ...this.ruleForm.light }
+          ]
+        };
+        await fetch(this.apiBase + '/api/greenhouses/' + this.selectedGreenhouse.greenhouseId + '/rules/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        alert('规则已保存');
+      },
+      
+      /**
+       * 分页加载历史数据
+       * @param {number} page 页码，从0开始
+       */
+      async loadHistory(page = 0) {
+        if (!this.historySensorId) {
+          alert('请先选择传感器');
+          return;
+        }
+        this.historyPage = page;
+        const url = this.apiBase + '/api/greenhouses/' + this.selectedGreenhouse.greenhouseId
+          + '/sensors/' + this.historySensorId + '/history?page=' + page + '&size=' + this.historySize;
+        const res = await fetch(url);
+        if (res.ok) {
+          const pageData = await res.json();
+          this.historyData = pageData.content;
+          this.historyTotalPages = pageData.totalPages;
+        } else {
+          this.historyData = [];
+          this.historyTotalPages = 0;
+        }
+      },
+      
+      // 切换手动/自动模式
+      async toggleManualMode(enabled) {
+        await fetch(this.apiBase + '/api/greenhouses/' + this.selectedGreenhouse.greenhouseId + '/manual-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        this.selectedGreenhouse.manualMode = enabled;
+        const listTarget = this.greenhouses.find(g => g.greenhouseId === this.selectedGreenhouse.greenhouseId);
+        if (listTarget) {
+          listTarget.manualMode = enabled;
+        }
+      },
+      
+      // 发送手动控制指令（开启/关闭设备）
+      async manualCommand(actuatorId, action) {
+        await fetch(this.apiBase + '/api/greenhouses/' + this.selectedGreenhouse.greenhouseId
+          + '/actuators/' + actuatorId + '/manual-command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, reason: '手动控制' })
+        });
+      },
+      formatTime(value) {
+        if (!value) return '';
+        const d = new Date(value);
+        return d.toLocaleString();
+      },
+      formatValue(value, unit) {
+        if (value === null || value === undefined) return '--';
+        return unit ? value + ' ' + unit : value;
+      }
+    }
+  }).mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: greenhouse-platform
+  datasource:
+    url: jdbc:mysql://localhost:3306/greenhouse?useSSL=false&serverTimezone=UTC
+    username: root
+    password: 123456
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+mqtt:
+  broker-url: tcp://localhost:1883
+  client-id: greenhouse-platform-backend
+  username:
+  password:
+  sensor-topic: sensor/+/+/+
+  raw-sensor-topic: raw/sensor/+/+/+
+  actuator-topic: actuator/+/+/+/command
+
+rabbitmq:
+  enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: WARN
+    com.example.greenhouse: INFO
+    org.springframework: WARN
+    org.hibernate: WARN
