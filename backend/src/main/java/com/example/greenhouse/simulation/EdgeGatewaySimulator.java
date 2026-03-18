@@ -31,18 +31,27 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
  */
 public class EdgeGatewaySimulator {
 
+    // MQTT Broker 地址
     private static final String BROKER_URL = "tcp://localhost:1883";
+    // 边缘网关客户端 ID（随机后缀避免重复）
     private static final String CLIENT_ID = "edge-gateway-simulator-" + UUID.randomUUID().toString().substring(0, 8);
+    // 原始传感器数据订阅主题前缀
     private static final String RAW_TOPIC = "raw/sensor/#";
     
+    // JSON 序列化/反序列化工具
     private static final ObjectMapper objectMapper = new ObjectMapper();
+    // 每个传感器的状态缓存（最近一次上报的值和时间）
     private static final Map<String, SensorState> sensorCache = new ConcurrentHashMap<>();
+    // 全局统计：收到的原始消息总数
     private static final AtomicLong totalRaw = new AtomicLong();
+    // 全局统计：经过过滤后转发到 sensor/... 的消息总数
     private static final AtomicLong totalForwarded = new AtomicLong();
 
-    // 过滤配置
+    // 过滤配置：数值变化阈值（5%）
     private static final double VALUE_THRESHOLD_PERCENT = 0.05; // 5% 变化阈值
+    // 心跳机制：即使数值不变，超过 60 秒也强制上报一次
     private static final long MAX_INTERVAL_SECONDS = 60; // 60秒心跳
+    // 限流：两次上报间隔至少 1 秒，避免抖动导致频繁上报
     private static final long MIN_INTERVAL_SECONDS = 1;  // 1秒限流
 
     static class SensorState {
@@ -82,6 +91,17 @@ public class EdgeGatewaySimulator {
             client.subscribe(RAW_TOPIC);
             System.out.println("Subscribed to: " + RAW_TOPIC);
             System.out.println("Gateway is running. Forwarding filtered data to sensor/...");
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                long raw = totalRaw.get();
+                long forwarded = totalForwarded.get();
+                long filtered = raw - forwarded;
+                double filteredPercent = raw == 0 ? 0.0 : (filtered * 100.0 / raw);
+                System.out.printf(
+                        "Stats => Raw: %d, Forwarded: %d, Filtered: %d (%.2f%%)%n",
+                        raw, forwarded, filtered, filteredPercent
+                );
+            }));
             
             // Keep alive
             synchronized (EdgeGatewaySimulator.class) {
@@ -95,6 +115,7 @@ public class EdgeGatewaySimulator {
 
     private static void processMessage(MqttClient client, String topic, MqttMessage message) {
         try {
+            // 统计原始消息总数（无论是否转发）
             long rawCount = totalRaw.incrementAndGet();
             String payloadJson = new String(message.getPayload(), StandardCharsets.UTF_8);
             // System.out.println("Received RAW: " + topic + " -> " + payloadJson);
@@ -114,6 +135,8 @@ public class EdgeGatewaySimulator {
             SensorState state = sensorCache.computeIfAbsent(cacheKey, k -> new SensorState());
 
             boolean shouldReport = false;
+            // 这里使用的是网关本机时间（Instant.now），而不是 payload 内的 timestamp
+            // 心跳和限流的时间间隔均基于“网关收到消息的本地时间差”
             Instant now = Instant.now();
 
             if (state.lastReportTime == null) {
@@ -125,6 +148,7 @@ public class EdgeGatewaySimulator {
                     return; // Rate limit
                 }
 
+                // 心跳：若距离上次上报超过 MAX_INTERVAL_SECONDS，则强制上报一次
                 if (secondsSinceLast >= MAX_INTERVAL_SECONDS) {
                     shouldReport = true;
                     System.out.println("Heartbeat: " + sensorId);
@@ -147,6 +171,7 @@ public class EdgeGatewaySimulator {
 
             if (shouldReport) {
                 long forwardedCount = totalForwarded.incrementAndGet();
+                // 更新本地缓存的最近一次上报值和时间（基于本机时间）
                 state.lastValue = payload.getValue();
                 state.lastReportTime = now;
 
