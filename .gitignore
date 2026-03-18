@@ -1,0 +1,16 @@
+# Java 编译文件
+*.class
+
+# Maven 构建目录
+target/
+
+# IDE 文件
+.idea/
+.vscode/
+
+# OS 文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
