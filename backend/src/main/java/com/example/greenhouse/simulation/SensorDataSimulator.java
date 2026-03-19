@@ -57,6 +57,15 @@ public class SensorDataSimulator {
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
     private static final Random random = new Random();
 
+    /**
+     * 低频扰动相位：程序启动后固定，用于让曲线更自然但保持连续。
+     * 说明：不在每个时间点重新随机，避免“点与点之间突变”。
+     */
+    private static final double HUMI_PHASE_1 = random.nextDouble() * 2 * Math.PI;
+    private static final double HUMI_PHASE_2 = random.nextDouble() * 2 * Math.PI;
+    private static final double LIGHT_PHASE_1 = random.nextDouble() * 2 * Math.PI;
+    private static final double LIGHT_PHASE_2 = random.nextDouble() * 2 * Math.PI;
+
     public static void main(String[] args) {
         MqttClient client = null;
         try {
@@ -138,39 +147,77 @@ public class SensorDataSimulator {
      * 根据时间生成一个较为自然的温度值（白天高、夜间低，带少量噪声）。
      */
     private static double generateTemperature(LocalDateTime time) {
-        int hour = time.getHour();
-        double base = (hour >= 9 && hour <= 18) ? 25.0 : 18.0;
-        double wave = 3.0 * Math.sin((hour / 24.0) * 2 * Math.PI);
-        double noise = random.nextGaussian() * 0.3;
-        return base + wave + noise;
+        // 以“当天分钟进度”作为连续自变量，取值范围 [0, 1)。
+        double dayProgress = getDayProgress(time);
+
+        // 主日周期：14:00 左右最高，整体范围控制在 18~35℃。
+        // 说明：中心值 26.5，振幅 8.5；采用单一正弦项可获得更平滑的曲线。
+        double theta = 2 * Math.PI * (dayProgress - 1.0 / 3.0);
+        double value = 26.5 + 8.5 * Math.sin(theta);
+        return Math.max(18.0, Math.min(35.0, value));
     }
 
     /**
      * 根据时间生成湿度值（白天略低，夜间略高，限制在 30~95 范围）。
      */
     private static double generateHumidity(LocalDateTime time) {
-        int hour = time.getHour();
-        double base = (hour >= 10 && hour <= 17) ? 55.0 : 70.0;
-        double wave = 5.0 * Math.cos((hour / 24.0) * 2 * Math.PI);
-        double noise = random.nextGaussian() * 1.5;
-        double value = base + wave + noise;
-        return Math.max(30.0, Math.min(95.0, value));
+        // 与温度形成负相关：温度高时相对湿度通常偏低。
+        double dayProgress = getDayProgress(time);
+
+        // 主日周期：范围 30~85，且 14:00 左右为低谷（极值点之一）。
+        // 说明：中心值 57.5，振幅 27.5；sin 相位偏移与温度保持一致（14:00 取极值）。
+        double dailyCycle = 57.5 - 27.5 * Math.sin(2 * Math.PI * (dayProgress - 1.0 / 3.0));
+
+        // 次级平滑扰动：小幅连续变化，增强自然感，同时不改变整体昼夜趋势。
+        double smoothFluctuation =
+            0.8 * Math.sin(2 * Math.PI * 1.5 * dayProgress + HUMI_PHASE_1)
+                + 0.5 * Math.sin(2 * Math.PI * 2.5 * dayProgress + HUMI_PHASE_2);
+
+        double value = dailyCycle + smoothFluctuation;
+        return Math.max(30.0, Math.min(85.0, value));
     }
 
     /**
-     * 根据时间生成光照值（Lux），夜间接近 0，中午最强。
+     * 计算时间点在当天中的连续进度（0.0 ~ 1.0）。
+     * 例：06:00 -> 0.25，12:00 -> 0.5，18:00 -> 0.75。
+     */
+    private static double getDayProgress(LocalDateTime time) {
+        double minutes = time.getHour() * 60.0 + time.getMinute() + time.getSecond() / 60.0;
+        return minutes / (24.0 * 60.0);
+    }
+
+    /**
+     * 根据时间生成光照值（Lux），采用连续曲线：
+     * 1) 日出到日落之间按正弦包络变化，正午附近最强；
+     * 2) 叠加小幅平滑扰动，模拟云层遮挡等影响；
+     * 3) 夜间连续为 0，避免按整点分段导致的台阶突变。
      */
     private static double generateLight(LocalDateTime time) {
-        int hour = time.getHour();
-        if (hour < 6 || hour > 19) {
+        double dayProgress = getDayProgress(time);
+
+        // 设定日照窗口：06:00 ~ 19:30。
+        double sunrise = 6.0 / 24.0;
+        double sunset = 19.5 / 24.0;
+
+        if (dayProgress <= sunrise || dayProgress >= sunset) {
             return 0.0;
         }
-        double center = 13.0; // 午后 1 点附近最强
-        double diff = hour - center;
+
+        // 将日照窗口映射到 [0, pi]，窗口边界为 0，中心点为 1（平滑连续）。
+        double daylightProgress = (dayProgress - sunrise) / (sunset - sunrise);
+        double envelope = Math.sin(Math.PI * daylightProgress);
+
         double maxLux = 50000.0;
-        double value = maxLux * Math.exp(-diff * diff / (2 * 4));
-        double noise = random.nextGaussian() * 20.0;
-        return Math.max(0.0, value + noise);
+        double base = maxLux * envelope;
+
+        // 低频连续扰动：白天有缓慢起伏，夜间由 envelope 自然压到 0。
+        double smoothFluctuation =
+                180.0 * Math.sin(2 * Math.PI * 3.0 * dayProgress + LIGHT_PHASE_1)
+                        + 90.0 * Math.sin(2 * Math.PI * 5.0 * dayProgress + LIGHT_PHASE_2);
+
+        // 用 envelope 衰减扰动，避免黎明/黄昏附近出现非物理尖峰。
+        double value = base + smoothFluctuation * envelope;
+        return Math.max(0.0, value);
     }
 
     /**
